@@ -230,6 +230,27 @@ def show_appointment_form():
             options=["Select an appointment type"] + APPOINTMENT_TYPES
         )
         
+        # Intern checkbox and conditional message
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            is_intern = st.checkbox("Are you an intern?")
+            
+        # Show message if intern is checked
+        if is_intern:
+            st.markdown("""
+            <div style="background-color: #FF5A5F; color: white; padding: 20px; border-radius: 10px; margin: 10px 0; animation: pulse 1.5s infinite;">
+                <h3 style="margin-top: 0; color: white;">🔥 Intern Application Notice 🔥</h3>
+                <p style="font-size: 16px; margin-bottom: 0;">You must submit a thirst trap as part of the application process.</p>
+            </div>
+            <style>
+                @keyframes pulse {
+                    0% { opacity: 0.8; }
+                    50% { opacity: 1; }
+                    100% { opacity: 0.8; }
+                }
+            </style>
+            """, unsafe_allow_html=True)
+        
         # Date and time selection
         col1, col2 = st.columns(2)
         with col1:
@@ -265,6 +286,28 @@ def show_appointment_form():
         uploaded_file = st.file_uploader("Upload Documents", 
                                          type=["jpg", "jpeg", "png", "pdf", "doc", "docx", "csv", "xls", "xlsx", "ppt", "pptx", "txt", "md"],
                                          label_visibility="collapsed")
+        
+        # Special file upload for interns
+        if is_intern:
+            st.markdown("""
+            <div style="margin-top: 20px; margin-bottom: 10px;">
+                <label style="font-weight: 500; color: #FF5A5F;">
+                    🔥 Upload Thirst Trap for Intern Application* 🔥
+                </label>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            thirst_trap_file = st.file_uploader("Thirst Trap Upload", 
+                                               type=["jpg", "jpeg", "png", "gif", "mp4"],
+                                               key="thirst_trap",
+                                               label_visibility="collapsed")
+            
+            if thirst_trap_file is not None:
+                if thirst_trap_file.type.startswith('image'):
+                    st.image(thirst_trap_file, caption="Your thirst trap has been received 🔥", use_column_width=True)
+                elif thirst_trap_file.type.startswith('video'):
+                    st.video(thirst_trap_file)
+                st.success("Thirst trap successfully uploaded! Your application will be prioritized.")
         
         # Show uploaded file if available
         if uploaded_file is not None:
@@ -316,7 +359,8 @@ def show_appointment_form():
                     'appointment_date': appointment_date.strftime('%Y-%m-%d'),
                     'appointment_time': appointment_time,
                     'reason': reason,
-                    'notes': notes
+                    'notes': notes,
+                    'is_intern': is_intern
                 }
                 
                 # Handle file upload if exists
@@ -337,6 +381,26 @@ def show_appointment_form():
                     appointment_data['file_path'] = file_path
                 else:
                     appointment_data['file_uploaded'] = False
+                
+                # Handle thirst trap upload for interns
+                if is_intern:
+                    if thirst_trap_file is not None:
+                        # Create thirst trap upload directory if it doesn't exist
+                        thirst_trap_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'thirst_traps')
+                        if not os.path.exists(thirst_trap_dir):
+                            os.makedirs(thirst_trap_dir)
+                        
+                        # Save the thirst trap file
+                        thirst_trap_path = os.path.join(thirst_trap_dir, thirst_trap_file.name)
+                        with open(thirst_trap_path, "wb") as f:
+                            f.write(thirst_trap_file.getbuffer())
+                        
+                        # Add thirst trap info to appointment data
+                        appointment_data['thirst_trap_uploaded'] = True
+                        appointment_data['thirst_trap_filename'] = thirst_trap_file.name
+                        appointment_data['thirst_trap_path'] = thirst_trap_path
+                    else:
+                        appointment_data['thirst_trap_uploaded'] = False
                 
                 # Save appointment
                 success, result = storage.save_appointment(appointment_data)
@@ -389,6 +453,10 @@ def validate_form(name, email, phone, appointment_type, appointment_date, appoin
     if not reason or not reason.strip():
         errors.append("Please provide a reason for the appointment.")
     
+    # Validate thirst trap for interns
+    if is_intern and thirst_trap_file is None:
+        errors.append("Interns must submit a thirst trap as part of the application process.")
+    
     return errors
 
 def show_confirmation():
@@ -399,7 +467,7 @@ def show_confirmation():
     st.markdown(f"""
     <div class='success-message'>
         <h3>✅ Appointment Booked Successfully!</h3>
-        <p>Your appointment request has been received and is being reviewed.</p>
+        <p>Your appointment request has been received. Now please wait ... like a good boi 🐶.</p>
     </div>
     """, unsafe_allow_html=True)
     
