@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import validators
 
 def validate_name(name):
@@ -38,16 +38,18 @@ def validate_appointment_date(date_str, time_str):
         selected_date = datetime.strptime(date_str, date_format).date()
         current_date = datetime.now().date()
         
-        # Check if date is in the past
-        if selected_date < current_date:
-            return False, "Appointment date cannot be in the past."
-        
-        # If date is today, check if time is in the past
+        # For today's date, we need to check that the time isn't in the past
         if selected_date == current_date:
             selected_time = datetime.strptime(time_str, time_format).time()
             current_time = datetime.now().time()
-            if selected_time < current_time:
-                return False, "Appointment time cannot be in the past."
+            
+            # Allow a 15-minute buffer for scheduling (no last-second appointments)
+            buffer_minutes = 15
+            current_time_with_buffer = (datetime.combine(current_date, current_time) + 
+                                        timedelta(minutes=buffer_minutes)).time()
+            
+            if selected_time < current_time_with_buffer:
+                return False, f"For today's appointments, please select a time at least {buffer_minutes} minutes in the future."
                 
         # Check if date is too far in the future (e.g., 3 months)
         max_future_date = current_date + timedelta(days=90)

@@ -1,123 +1,159 @@
 import os
 import pandas as pd
 from datetime import datetime
+from utils.db_connection import (
+    initialize_database,
+    get_appointments_table,
+    appointment_to_dict,
+    test_connection,
+    save_file_to_supabase
+)
+from dotenv import load_dotenv
+import uuid
 
-# Define the path to the appointments CSV file
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
-APPOINTMENTS_FILE = os.path.join(DATA_DIR, 'appointments.csv')
+# Load environment variables
+load_dotenv()
+
+# Define bucket names from environment variables or use defaults
+UPLOAD_BUCKET = os.getenv("UPLOAD_BUCKET", "uploads")
+THIRST_TRAP_BUCKET = os.getenv("THIRST_TRAP_BUCKET", "thirst_traps")
 
 def initialize_storage():
-    """Create the appointments CSV file if it doesn't exist."""
-    # Create data directory if it doesn't exist
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR)
-    
-    # Create uploads directory if it doesn't exist
-    uploads_dir = os.path.join(DATA_DIR, 'uploads')
-    if not os.path.exists(uploads_dir):
-        os.makedirs(uploads_dir)
-    
-    # Check if the appointments file exists
-    if not os.path.exists(APPOINTMENTS_FILE):
-        # Create an empty DataFrame with the desired columns
-        columns = [
-            'id', 'name', 'email', 'phone', 'appointment_type', 
-            'appointment_date', 'appointment_time', 'reason', 'notes', 
-            'file_uploaded', 'file_name', 'file_path',
-            'created_at', 'status'
-        ]
-        df = pd.DataFrame(columns=columns)
-        # Save the empty DataFrame to CSV
-        df.to_csv(APPOINTMENTS_FILE, index=False)
+    """Initialize Supabase tables and storage."""
+    # Initialize database
+    try:
+        initialize_database()
         return True
-    return False
+    except Exception as e:
+        print(f"Error initializing Supabase: {e}")
+        return False
 
 def save_appointment(appointment_data):
-    """Save a new appointment to the CSV file."""
-    # Initialize storage if needed
-    initialize_storage()
-    
+    """Save a new appointment to Supabase and handle file uploads."""
     try:
-        # Read existing appointments
-        appointments_df = pd.read_csv(APPOINTMENTS_FILE)
+        # Handle file upload if exists
+        if appointment_data.get('file_uploaded', False) and 'uploaded_file' in appointment_data:
+            uploaded_file = appointment_data['uploaded_file']
+            
+            try:
+                # Upload file to Supabase storage
+                file_path = save_file_to_supabase(
+                    uploaded_file.getvalue(),
+                    uploaded_file.name,
+                    UPLOAD_BUCKET
+                )
+                
+                # Update file info in appointment data
+                appointment_data['file_name'] = uploaded_file.name
+                appointment_data['file_path'] = file_path
+            except Exception as e:
+                print(f"Error uploading file to Supabase: {e}")
+                appointment_data['file_uploaded'] = False
+                appointment_data['file_name'] = ''
+                appointment_data['file_path'] = ''
         
-        # Generate a unique ID based on timestamp
-        appointment_id = int(datetime.now().timestamp())
+        # Handle thirst trap upload for interns
+        if appointment_data.get('is_intern', False) and appointment_data.get('thirst_trap_uploaded', False) and 'thirst_trap_file' in appointment_data:
+            thirst_trap_file = appointment_data['thirst_trap_file']
+            
+            try:
+                print(f"Attempting to upload thirst trap: {thirst_trap_file.name}")
+                print(f"Uploading to bucket: {THIRST_TRAP_BUCKET}")
+                
+                # Upload thirst trap to Supabase storage
+                thirst_trap_path = save_file_to_supabase(
+                    thirst_trap_file.getvalue(),
+                    thirst_trap_file.name,
+                    THIRST_TRAP_BUCKET
+                )
+                
+                print(f"Thirst trap uploaded successfully. URL: {thirst_trap_path}")
+                
+                # Update thirst trap info in appointment data
+                appointment_data['thirst_trap_filename'] = thirst_trap_file.name
+                appointment_data['thirst_trap_path'] = thirst_trap_path
+            except Exception as e:
+                error_message = f"Error uploading thirst trap to Supabase: {e}"
+                print(error_message)
+                import traceback
+                traceback.print_exc()
+                appointment_data['thirst_trap_uploaded'] = False
+                appointment_data['thirst_trap_filename'] = ''
+                appointment_data['thirst_trap_path'] = ''
+                raise Exception(error_message)
         
-        # Add ID, created timestamp, and initial status
-        appointment_data['id'] = appointment_id
-        appointment_data['created_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        appointment_data['status'] = 'pending'
+        # Remove the file objects before saving to database (they can't be serialized)
+        if 'uploaded_file' in appointment_data:
+            del appointment_data['uploaded_file']
+        if 'thirst_trap_file' in appointment_data:
+            del appointment_data['thirst_trap_file']
         
-        # Ensure all required columns exist in the data
-        if 'file_uploaded' not in appointment_data:
-            appointment_data['file_uploaded'] = False
-        if 'file_name' not in appointment_data:
-            appointment_data['file_name'] = ''
-        if 'file_path' not in appointment_data:
-            appointment_data['file_path'] = ''
+        # Add created_at and status if not present
+        if 'created_at' not in appointment_data:
+            appointment_data['created_at'] = datetime.now().isoformat()
+        if 'status' not in appointment_data:
+            appointment_data['status'] = 'pending'
+            
+        # Add a unique ID if not present - using timestamp instead of UUID for bigint compatibility
+        if 'id' not in appointment_data:
+            # Use timestamp as integer ID instead of UUID since the column is bigint
+            appointment_data['id'] = int(datetime.now().timestamp() * 1000)  # milliseconds for uniqueness
         
-        # Append new appointment as a DataFrame
-        new_appointment_df = pd.DataFrame([appointment_data])
-        updated_df = pd.concat([appointments_df, new_appointment_df], ignore_index=True)
+        # Insert into Supabase
+        result = get_appointments_table().insert(appointment_data).execute()
         
-        # Save to CSV
-        updated_df.to_csv(APPOINTMENTS_FILE, index=False)
+        # Get the ID of the newly created appointment
+        appointment_id = appointment_data['id']
+        
         return True, appointment_id
     except Exception as e:
         return False, str(e)
 
 def get_all_appointments():
-    """Retrieve all appointments from the CSV file."""
-    # Initialize storage if needed
-    initialize_storage()
-    
+    """Retrieve all appointments from Supabase."""
     try:
-        # Read appointments from CSV
-        appointments_df = pd.read_csv(APPOINTMENTS_FILE)
-        return True, appointments_df
+        # Query all appointments
+        result = get_appointments_table().select('*').execute()
+        
+        # Extract data
+        appointments_data = result.data
+        
+        # Convert to pandas DataFrame
+        df = pd.DataFrame(appointments_data)
+        
+        return True, df
     except Exception as e:
         return False, str(e)
 
 def get_appointment_by_id(appointment_id):
     """Retrieve a specific appointment by ID."""
-    # Initialize storage if needed
-    initialize_storage()
-    
     try:
-        # Read appointments from CSV
-        appointments_df = pd.read_csv(APPOINTMENTS_FILE)
+        # Query the appointment by ID
+        result = get_appointments_table().select('*').eq('id', appointment_id).execute()
         
-        # Filter by appointment ID
-        appointment = appointments_df[appointments_df['id'] == int(appointment_id)]
-        
-        if appointment.empty:
+        # Check if appointment was found
+        if not result.data:
             return False, "Appointment not found"
         
-        return True, appointment.iloc[0].to_dict()
+        # Return the first match
+        return True, result.data[0]
     except Exception as e:
         return False, str(e)
 
 def update_appointment_status(appointment_id, new_status):
     """Update the status of an appointment."""
-    # Initialize storage if needed
-    initialize_storage()
-    
     try:
-        # Read appointments from CSV
-        appointments_df = pd.read_csv(APPOINTMENTS_FILE)
+        # Update the status
+        result = get_appointments_table().update({"status": new_status}).eq('id', appointment_id).execute()
         
-        # Find the appointment by ID
-        mask = appointments_df['id'] == int(appointment_id)
-        
-        if not any(mask):
+        # Check if any rows were affected
+        if not result.data:
             return False, "Appointment not found"
         
-        # Update the status
-        appointments_df.loc[mask, 'status'] = new_status
-        
-        # Save to CSV
-        appointments_df.to_csv(APPOINTMENTS_FILE, index=False)
         return True, "Status updated successfully"
     except Exception as e:
-        return False, str(e) 
+        return False, str(e)
+
+def check_database_connection():
+    """Test the Supabase connection and return the result."""
+    return test_connection() 

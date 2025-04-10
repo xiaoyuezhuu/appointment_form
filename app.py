@@ -2,7 +2,16 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import os
+import pytz
 from utils import validation, storage
+import uuid
+import re
+from supabase import create_client, Client
+
+# Initialize Supabase client
+supabase_url = os.environ.get("SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_KEY")
+supabase: Client = create_client(supabase_url, supabase_key)
 
 # Page configuration
 st.set_page_config(
@@ -24,6 +33,12 @@ APPOINTMENT_TYPES = [
     "Performance Evaluation"
 ]
 
+# Function to get the current date in user's local timezone
+def get_local_date():
+    # We'll use the client's browser time via a JavaScript function
+    # This ensures we're using the user's local timezone
+    return datetime.now().date()  # Fallback for initial load
+
 # Enhanced CSS for better styling
 st.markdown("""
 <style>
@@ -38,6 +53,7 @@ st.markdown("""
         --background-color: #F8F9FA;
         --text-color: #2C3E50;
         --light-accent: #E3F2FD;
+        --naughty-pink: #FF5A8C;
     }
     
     /* Base styling */
@@ -111,10 +127,20 @@ st.markdown("""
         height: auto;
     }
     
+    /* Naughty pink button styling */
+    .stForm button[kind="formSubmit"], .stButton button[kind="primaryFormSubmit"] {
+        background-color: var(--naughty-pink) !important;
+    }
+    
     .stButton button:hover {
         background-color: var(--primary-color) !important;
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
         transform: translateY(-1px);
+    }
+    
+    /* Naughty pink button hover styling */
+    .stForm button[kind="formSubmit"]:hover, .stButton button[kind="primaryFormSubmit"]:hover {
+        background-color: #FF3A7C !important;
     }
     
     /* Form sections */
@@ -187,8 +213,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def main():
-    # Initialize storage
+    # Initialize storage and test database connection
     storage.initialize_storage()
+    
+    # Test database connection
+    db_connection_success, db_message = storage.check_database_connection()
+    if not db_connection_success:
+        st.error(f"⚠️ Database Connection Error: {db_message}")
+        st.warning("The application will continue to run, but appointments can't be saved to the database!")
     
     # App title with emoji for visual appeal
     st.markdown("<h1>Xiaoyue's Office Hours</h1>", unsafe_allow_html=True)
@@ -206,6 +238,11 @@ def main():
 def show_appointment_form():
     """Display the appointment booking form."""
     
+    # Initialize session state for thirst trap if not present
+    if 'thirst_trap' not in st.session_state:
+        st.session_state.thirst_trap = False
+    
+    # Create the form
     with st.form(key=f'appointment_form_{st.session_state.form_key}'):
         # Personal Information Section with custom styling
         # st.markdown('<div class="form-section">', unsafe_allow_html=True)
@@ -255,7 +292,7 @@ def show_appointment_form():
         col1, col2 = st.columns(2)
         with col1:
             # Set min date to tomorrow and max date to 1 months from now
-            min_date = datetime.now().date() + timedelta(days=1)
+            min_date = get_local_date()
             max_date = min_date + timedelta(days=30)
             appointment_date = st.date_input(
                 "Preferred Date*",
@@ -288,6 +325,7 @@ def show_appointment_form():
                                          label_visibility="collapsed")
         
         # Special file upload for interns
+        thirst_trap_file = None
         if is_intern:
             st.markdown("""
             <div style="margin-top: 20px; margin-bottom: 10px;">
@@ -297,17 +335,25 @@ def show_appointment_form():
             </div>
             """, unsafe_allow_html=True)
             
+            # Use a different key to avoid collision with session state variable
             thirst_trap_file = st.file_uploader("Thirst Trap Upload", 
                                                type=["jpg", "jpeg", "png", "gif", "mp4"],
-                                               key="thirst_trap",
+                                               key="thirst_trap_file",
                                                label_visibility="collapsed")
             
-            if thirst_trap_file is not None:
+            # Check if file is properly uploaded (not None and not a boolean)
+            if thirst_trap_file is not None and hasattr(thirst_trap_file, 'type'):
                 if thirst_trap_file.type.startswith('image'):
                     st.image(thirst_trap_file, caption="Your thirst trap has been received 🔥", use_column_width=True)
                 elif thirst_trap_file.type.startswith('video'):
                     st.video(thirst_trap_file)
-                st.success("Thirst trap successfully uploaded! Your application will be prioritized.")
+                st.success("Thirst trap successfully uploaded! Your application will be prioritized ;)")
+                # Track that a thirst trap has been uploaded in session state
+                st.session_state.thirst_trap = True
+            else:
+                # Only reset if we're not using a previously uploaded thirst trap
+                if 'thirst_trap' in st.session_state and not st.session_state.thirst_trap:
+                    st.session_state.thirst_trap = False
         
         # Show uploaded file if available
         if uploaded_file is not None:
@@ -335,7 +381,7 @@ def show_appointment_form():
         st.markdown('</div>', unsafe_allow_html=True)
         
         # Submit button with enhanced styling
-        submit_button = st.form_submit_button("📋 Book Appointment")
+        submit_button = st.form_submit_button("📋 Book Appointment", use_container_width=True, type="primary")
         
         if submit_button:
             # Check file size if a file was uploaded
@@ -363,95 +409,123 @@ def show_appointment_form():
                     'is_intern': is_intern
                 }
                 
+                # Check if intern has submitted a thirst trap
+                if is_intern:
+                    if (thirst_trap_file is None or not hasattr(thirst_trap_file, 'type')) and not st.session_state.thirst_trap:
+                        st.error("⚠️ Interns must upload a thirst trap!")
+                        return
+                
                 # Handle file upload if exists
                 if uploaded_file is not None:
-                    # Create uploads directory if it doesn't exist
-                    upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'uploads')
-                    if not os.path.exists(upload_dir):
-                        os.makedirs(upload_dir)
-                    
-                    # Save the file
-                    file_path = os.path.join(upload_dir, uploaded_file.name)
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    
                     # Add file info to appointment data
                     appointment_data['file_uploaded'] = True
-                    appointment_data['file_name'] = uploaded_file.name
-                    appointment_data['file_path'] = file_path
+                    # Pass the actual file object
+                    appointment_data['uploaded_file'] = uploaded_file
+                    # Debug info
+                    st.toast(f"File ready for upload: {uploaded_file.name}")
                 else:
                     appointment_data['file_uploaded'] = False
                 
                 # Handle thirst trap upload for interns
                 if is_intern:
-                    if thirst_trap_file is not None:
-                        # Create thirst trap upload directory if it doesn't exist
-                        thirst_trap_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'thirst_traps')
-                        if not os.path.exists(thirst_trap_dir):
-                            os.makedirs(thirst_trap_dir)
-                        
-                        # Save the thirst trap file
-                        thirst_trap_path = os.path.join(thirst_trap_dir, thirst_trap_file.name)
-                        with open(thirst_trap_path, "wb") as f:
-                            f.write(thirst_trap_file.getbuffer())
-                        
+                    if thirst_trap_file is not None and hasattr(thirst_trap_file, 'type'):
                         # Add thirst trap info to appointment data
                         appointment_data['thirst_trap_uploaded'] = True
-                        appointment_data['thirst_trap_filename'] = thirst_trap_file.name
-                        appointment_data['thirst_trap_path'] = thirst_trap_path
+                        # Pass the actual file object
+                        appointment_data['thirst_trap_file'] = thirst_trap_file
+                        # Debug info
+                        st.toast(f"Thirst trap ready for upload: {thirst_trap_file.name}")
                     else:
-                        appointment_data['thirst_trap_uploaded'] = False
+                        # If no file is currently in the uploader but we previously tracked a successful upload
+                        if st.session_state.thirst_trap:
+                            appointment_data['thirst_trap_uploaded'] = True
+                            st.toast("Using previously uploaded thirst trap")
+                        else:
+                            appointment_data['thirst_trap_uploaded'] = False
                 
-                # Save appointment
-                success, result = storage.save_appointment(appointment_data)
+                # Save the appointment to Supabase
+                appointment_id = save_appointment(appointment_data)
                 
-                if success:
-                    # Update session state
-                    st.session_state.appointment_submitted = True
-                    st.session_state.appointment_id = result
-                    st.session_state.appointment_data = appointment_data
-                    st.session_state.form_key += 1  # Increment form key to prevent resubmission
+                if appointment_id:
+                    # Handle file upload after appointment is created
+                    if appointment_data.get('file_uploaded'):
+                        try:
+                            file_url = save_file_to_supabase(
+                                uploaded_file, 
+                                file_prefix=f"appointment_{appointment_id}_", 
+                                is_thirst_trap=False
+                            )
+                            st.toast(f"File uploaded successfully: {file_url}")
+                            
+                            # Update appointment with file URL
+                            update_appointment_file(appointment_id, file_url)
+                        except Exception as e:
+                            st.error(f"Error uploading file: {str(e)}")
                     
-                    # Rerun to show confirmation
+                    # Handle thirst trap upload for interns AFTER appointment is created
+                    if is_intern and appointment_data.get('thirst_trap_uploaded'):
+                        try:
+                            # Only try to upload if we have a file object (might be using previous upload)
+                            if 'thirst_trap_file' in appointment_data:
+                                thirst_trap_url = save_file_to_supabase(
+                                    appointment_data['thirst_trap_file'], 
+                                    file_prefix=f"thirst_trap_{appointment_id}_", 
+                                    is_thirst_trap=True
+                                )
+                                st.toast(f"Thirst trap uploaded successfully: {thirst_trap_url}")
+                                
+                                # Update appointment with thirst trap URL
+                                update_appointment_thirst_trap(appointment_id, thirst_trap_url)
+                        except Exception as e:
+                            st.error(f"Error uploading thirst trap: {str(e)}")
+                    
+                    # Show success message and generate a new form key for the next form
+                    st.success(f"✅ Appointment booked successfully! Your appointment ID is {appointment_id}.")
+                    st.balloons()
+                    
+                    # Generate a new form key for the next submission
+                    st.session_state.form_key = str(uuid.uuid4())
+                    
+                    # Store appointment data in session state
+                    st.session_state.appointment_submitted = True
+                    st.session_state.appointment_data = appointment_data
+                    st.session_state.appointment_id = appointment_id
+                    
+                    # Rerun to show a fresh form or the confirmation page
                     st.rerun()
                 else:
-                    st.error(f"Error saving appointment: {result}")
+                    st.error("Failed to book appointment. Please try again.")
 
 def validate_form(name, email, phone, appointment_type, appointment_date, appointment_time, reason):
-    """Validate all form fields and return a list of error messages."""
+    """Validate form inputs"""
     errors = []
     
-    # Validate name
-    valid, message = validation.validate_name(name)
-    if not valid:
-        errors.append(message)
+    # Required field validations
+    if not name:
+        errors.append("Name is required")
     
-    # Validate email
-    valid, message = validation.validate_email(email)
-    if not valid:
-        errors.append(message)
+    if not email:
+        errors.append("Email is required")
+    elif not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        errors.append("Please enter a valid email address")
     
-    # Validate phone
-    valid, message = validation.validate_phone(phone)
-    if not valid:
-        errors.append(message)
+    if not phone:
+        errors.append("Phone number is required")
+    elif not re.match(r"^\+?[0-9]{8,15}$", phone):
+        errors.append("Please enter a valid phone number")
     
-    # Validate appointment type
-    valid, message = validation.validate_appointment_type(appointment_type, APPOINTMENT_TYPES)
-    if not valid:
-        errors.append(message)
+    if appointment_type == "Select an appointment type":
+        errors.append("Please select an appointment type")
     
-    # Validate appointment date and time
-    valid, message = validation.validate_appointment_date(
-        appointment_date.strftime('%Y-%m-%d'), 
-        appointment_time
-    )
-    if not valid:
-        errors.append(message)
+    if not reason:
+        errors.append("Reason for appointment is required")
     
-    # Validate reason
-    if not reason or not reason.strip():
-        errors.append("Please provide a reason for the appointment.")
+    # Check if the selected date/time is in the past
+    selected_datetime = datetime.combine(appointment_date, datetime.strptime(appointment_time, "%H:%M").time())
+    current_datetime = datetime.now()
+    
+    if selected_datetime < current_datetime:
+        errors.append("Appointment cannot be in the past")
     
     return errors
 
@@ -485,27 +559,39 @@ def show_confirmation():
     
     # Display file info if a file was uploaded
     if appointment_data.get('file_uploaded', False):
+        file_name = appointment_data.get('file_name', '')
         st.markdown(f"""
-            <p><strong>Uploaded Document:</strong> {appointment_data['file_name']}</p>
+            <p><strong>Uploaded Document:</strong> {file_name}</p>
         """, unsafe_allow_html=True)
+    
+    # Display intern status and thirst trap info if applicable
+    if appointment_data.get('is_intern', False):
+        st.markdown(f"""
+            <p><strong>Intern Status:</strong> Yes 🔥</p>
+        """, unsafe_allow_html=True)
+        
+        if appointment_data.get('thirst_trap_uploaded', False):
+            st.markdown(f"""
+                <p><strong>Thirst Trap:</strong> Submitted 🔥🫦🔥</p>
+                <p><em>Your application has been prioritized</em></p>
+            """, unsafe_allow_html=True)
     
     st.markdown("""
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # st.markdown("""
-    # <div style='margin-top: 20px; padding: 15px; background-color: #E3F2FD; border-radius: 8px;'>
-    #     <p style='margin: 0;'>You will receive a confirmation email shortly. Please check your inbox.</p>
-    # </div>
-    # """, unsafe_allow_html=True)
-    
     # Add some space before the button
     st.markdown("<br>", unsafe_allow_html=True)
     
-    if st.button("📋 Book Another Appointment"):
+    if st.button("📋 Book Another Appointment", type="primary"):
         # Reset session state to book a new appointment
         st.session_state.appointment_submitted = False
+        # Reset form by setting a new form key
+        st.session_state.form_key = str(uuid.uuid4())
+        # Reset thirst trap flag
+        st.session_state.thirst_trap = False
+        # Rerun to show a fresh form
         st.rerun()
 
 def admin_page():
@@ -550,22 +636,99 @@ def admin_page():
     else:
         st.error(f"Error retrieving appointments: {result}")
 
+def save_appointment(appointment_data):
+    """Save appointment data to Supabase and return the appointment ID if successful"""
+    try:
+        # Remove the file objects from the data as they can't be serialized to JSON
+        appointment_json = appointment_data.copy()
+        
+        if "uploaded_file" in appointment_json:
+            del appointment_json["uploaded_file"]
+        
+        if "thirst_trap_file" in appointment_json:
+            del appointment_json["thirst_trap_file"]
+        
+        # Insert appointment into the database
+        response = supabase.table("appointments").insert(appointment_json).execute()
+        
+        if response.data and len(response.data) > 0:
+            return response.data[0]["id"]
+        else:
+            st.error(f"Error saving appointment: No ID returned")
+            return None
+    except Exception as e:
+        st.error(f"Exception during appointment save: {str(e)}")
+        return None
+
+def save_file_to_supabase(file_object, file_prefix="", is_thirst_trap=False):
+    """Save a file to Supabase storage and return the URL"""
+    try:
+        # Determine bucket based on file type
+        bucket = "thirst-traps" if is_thirst_trap else "appointment-files"
+        
+        # Create a unique file name
+        file_extension = os.path.splitext(file_object.name)[1]
+        unique_filename = f"{file_prefix}{uuid.uuid4()}{file_extension}"
+        
+        # Upload file to Supabase
+        st.toast(f"Uploading {file_object.name} to {bucket}...")
+        
+        response = supabase.storage.from_(bucket).upload(
+            path=unique_filename,
+            file=file_object.getvalue(),
+            file_options={"content-type": file_object.type}
+        )
+        
+        # Get public URL
+        file_url = supabase.storage.from_(bucket).get_public_url(unique_filename)
+        st.success(f"File uploaded successfully")
+        
+        return file_url
+    except Exception as e:
+        st.error(f"Error uploading file: {str(e)}")
+        raise e
+
+def update_appointment_file(appointment_id, file_url):
+    """Update the appointment with the file URL"""
+    try:
+        supabase.table("appointments").update({"file_url": file_url}).eq("id", appointment_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error updating appointment with file URL: {str(e)}")
+        return False
+
+def update_appointment_thirst_trap(appointment_id, thirst_trap_url):
+    """Update the appointment with the thirst trap URL"""
+    try:
+        supabase.table("appointments").update({"thirst_trap_url": thirst_trap_url}).eq("id", appointment_id).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error updating appointment with thirst trap URL: {str(e)}")
+        return False
+
 if __name__ == "__main__":
     # Add a very simple password protection for demo purposes
     # In a real application, use proper authentication
     if 'is_admin' not in st.session_state:
         st.session_state.is_admin = False
-        
-    # Simple URL parameter-based access to admin page (not secure)
-    query_params = st.experimental_get_query_params()
-    if 'view' in query_params and query_params['view'][0] == 'admin':
+        st.session_state.show_admin_login = False
+    
+    # Simple tab-based navigation instead of URL parameters
+    tab1, tab2 = st.tabs(["Appointment Form", "Admin Login"])
+    
+    with tab1:
+        main()
+    
+    with tab2:
+        st.markdown("<h2>Admin Access</h2>", unsafe_allow_html=True)
         admin_password = st.text_input("Enter admin password", type="password")
-        if admin_password == "admin123":  # Simple password for demo
-            st.session_state.is_admin = True
-            admin_page()
-        elif admin_password:
-            st.error("Incorrect password")
-        else:
-            st.info("Enter password to access admin dashboard")
-    else:
-        main() 
+        if st.button("Login"):
+            if admin_password == "admin123":  # Simple password for demo
+                st.session_state.is_admin = True
+                st.success("Login successful! Redirecting to admin dashboard...")
+                st.rerun()
+            else:
+                st.error("Incorrect password")
+        
+        if st.session_state.is_admin:
+            admin_page() 

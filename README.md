@@ -1,6 +1,6 @@
 # 📅 Xiaoyue's Appointment Form
 
-A stylish, mobile-friendly web application for booking appointments, built with Python and Streamlit.
+A stylish, modern appointment booking application built with Python, Streamlit, and Supabase.
 
 ![Appointment Form Screenshot](data/screenshots/appointment_form.png)
 
@@ -11,8 +11,9 @@ A stylish, mobile-friendly web application for booking appointments, built with 
 - **Mobile-responsive design**
 - **Form validation with error messages**
 - **File upload capability (max 20MB)**
+- **Supabase integration for data storage**
+- **Special intern application feature with thirst trap upload**
 - **Confirmation page after successful booking**
-- **Data storage in CSV format**
 - **Basic admin dashboard**
 
 ## 📋 Installation
@@ -39,6 +40,28 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+## ⚙️ Supabase Setup
+
+This application uses Supabase for data storage and file uploads. Follow these steps to set up your Supabase project:
+
+1. Create a free account at [Supabase](https://supabase.com/)
+2. Create a new project
+3. Create the following tables:
+   - `appointments` - for storing appointment data
+4. Set up storage buckets:
+   - Create a bucket called `appointment-files` for regular file uploads
+   - Create a bucket called `thirst-traps` for intern application photos/videos
+5. Set your storage buckets to public access (or configure appropriate RLS policies)
+
+## 🔑 Environment Variables
+
+Create a `.env` file in the root directory with the following variables:
+
+```
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_anon_key
+```
+
 ## 🚀 Running Locally
 
 To run the application on your local machine:
@@ -53,10 +76,26 @@ The application will be available at http://localhost:8501
 
 The application includes a basic admin dashboard to view submitted appointments:
 
-1. Add `?view=admin` to the URL: http://localhost:8501/?view=admin
+1. Navigate to the "Admin Login" tab
 2. Enter the password: `admin123` (change this in production)
 
-## 🌐 Deployment Options for Remote Access
+## 📱 Using the Application
+
+### Standard Appointment Booking
+1. Fill out the required personal information
+2. Select appointment type, date, and time
+3. Provide reason for the appointment
+4. Optionally upload relevant documents
+5. Click "Book Appointment"
+
+### Intern Applications
+The application includes a special feature for intern applicants:
+1. Check the "Are you an intern?" box
+2. Complete the standard appointment form
+3. Upload a "thirst trap" image or video (required for intern applications)
+4. Your application will be prioritized 🔥
+
+## 🌐 Deployment Options
 
 ### 1. Streamlit Cloud (Recommended)
 
@@ -65,49 +104,21 @@ The easiest way to make your app available to others:
 1. Push your code to a GitHub repository
 2. Sign up at [Streamlit Cloud](https://streamlit.io/cloud)
 3. Connect your GitHub account and select your repository
-4. Your app will be deployed with a public URL like `https://yourusername-appointment-form.streamlit.app`
+4. Set the required environment variables in the Streamlit Cloud settings
+5. Your app will be deployed with a public URL
 
-### 2. Heroku
-
-To deploy on Heroku:
-
-1. Create a `Procfile` in the root directory:
-```
-web: streamlit run --server.port $PORT app.py
-```
-
-2. Add a `runtime.txt` file:
-```
-python-3.11.0
-```
-
-3. Deploy using Heroku CLI:
-```bash
-heroku login
-heroku create your-app-name
-git push heroku main
-```
-
-### 3. Temporary Sharing with Ngrok
-
-For quick temporary sharing:
-
-1. Install ngrok: `pip install pyngrok`
-2. Run your app: `streamlit run app.py`
-3. In a new terminal: `ngrok http 8501`
-4. Share the ngrok URL (valid for a few hours)
-
-### 4. Self-hosting on VPS
+### 2. Self-hosting on VPS
 
 For a permanent solution on your own server:
 
 1. Set up a VM on AWS, GCP, or DigitalOcean
 2. Clone the repo and install dependencies
-3. Run with:
+3. Set up your environment variables
+4. Run with:
 ```bash
 streamlit run app.py --server.headless=true --server.enableCORS=false
 ```
-4. Configure your domain and SSL certificates
+5. Configure your domain and SSL certificates
 
 ## 🎨 Customization
 
@@ -146,10 +157,10 @@ The app uses a custom CSS styling with the Poppins font and a color scheme defin
 
 - Email notifications for appointments
 - Calendar integration
-- Database storage (SQL/NoSQL) instead of CSV
 - Enhanced admin dashboard with more features
 - User authentication system
 - Time slot availability checking
+- Enhanced security for file uploads
 
 ## 📄 License
 
