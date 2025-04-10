@@ -453,10 +453,6 @@ def validate_form(name, email, phone, appointment_type, appointment_date, appoin
     if not reason or not reason.strip():
         errors.append("Please provide a reason for the appointment.")
     
-    # Validate thirst trap for interns
-    if is_intern and thirst_trap_file is None:
-        errors.append("Interns must submit a thirst trap as part of the application process.")
-    
     return errors
 
 def show_confirmation():
@@ -467,7 +463,8 @@ def show_confirmation():
     st.markdown(f"""
     <div class='success-message'>
         <h3>✅ Appointment Booked Successfully!</h3>
-        <p>Your appointment request has been received. Now please wait ... like a good boi 🐶.</p>
+        <p>Your appointment request has been received. </p>
+        <p>Now please wait ... like a good boi 🐶.</p>
     </div>
     """, unsafe_allow_html=True)
     
